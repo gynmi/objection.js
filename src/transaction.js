@@ -51,7 +51,7 @@ export default function transaction() {
     const stack = new Error().stack;
     const start = Date.now();
     const interval = setInterval(() => {
-      console.warn(`transaction has been running for ${Date.now() - start} MS. transaction was started from:`, stack);
+      console.warn(`transaction has been running for ${Date.now() - start} ms. transaction was started from:`, stack);
     }, TIMEOUT);
 
     return knex.transaction(trx => {

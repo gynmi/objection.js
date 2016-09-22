@@ -48,6 +48,8 @@ export default class QueryBuilder extends QueryBuilderBase {
     this._unrelateOperationFactory = unrelateOperationFactory;
     this._deleteOperationFactory = deleteOperationFactory;
     this._eagerOperationFactory = modelClass.defaultEagerAlgorithm;
+
+    this.stack = new Error().stack;
   }
 
   /**
@@ -361,6 +363,8 @@ export default class QueryBuilder extends QueryBuilderBase {
     builder._deleteOperationFactory = this._deleteOperationFactory;
     builder._eagerOperationFactory = this._eagerOperationFactory;
 
+    builder.stack = this.stack;
+
     return builder;
   }
 
@@ -540,6 +544,8 @@ export default class QueryBuilder extends QueryBuilderBase {
    * @returns {Promise}
    */
   execute() {
+    const stack = this.stack;
+
     // Take a clone so that we don't modify this instance during execution.
     let builder = this.clone();
     let promiseCtx = {builder: builder};
@@ -579,9 +585,23 @@ export default class QueryBuilder extends QueryBuilderBase {
       } else if (queryExecutorOperation) {
         promise = queryExecutorOperation.queryExecutor(builder).bind(promiseCtx);
       } else {
+        const TIMEOUT = 10000;
+        const start = Date.now();
+        const interval = setInterval(() => {
+          console.warn(`query has been running for ${Date.now() - start} ms. query was started from:`, stack);
+        }, TIMEOUT);
+
         promise = knexBuilder.bind(promiseCtx);
         promise = chainRawResultOperations(promise, builder._operations);
         promise = promise.then(createModels);
+
+        promise = promise.then((res) => {
+          clearInterval(interval);
+          return res;
+        }).catch((err) => {
+          clearInterval(interval);
+          throw err;
+        });
       }
 
       promise = chainAfterQueryOperations(promise, builder._operations);
