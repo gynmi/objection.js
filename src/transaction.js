@@ -47,6 +47,13 @@ export default function transaction() {
       callback = Promise.coroutine(callback);
     }
 
+    const TIMEOUT = 10000;
+    const stack = new Error().stack;
+    const start = Date.now();
+    const interval = setInterval(() => {
+      console.warn(`transaction has been running for ${Date.now() - start} MS. transaction was started from:`, stack);
+    }, TIMEOUT);
+
     return knex.transaction(trx => {
       let args = new Array(modelClasses.length + 1);
 
@@ -59,6 +66,12 @@ export default function transaction() {
       return Promise.try(() => {
         return callback.apply(trx, args);
       });
+    }).then((res) => {
+      clearInterval(interval);
+      return res;
+    }).catch((err) => {
+      clearInterval(interval);
+      throw err;
     });
   }
 }
@@ -85,25 +98,6 @@ transaction.start = function (modelClassOrKnex) {
       reject(err);
     });
   });
-};
-
-transaction.debug = function () {
-  const TIMEOUT = 10000;
-  const stack = new Error().stack;
-  const start = Date.now();
-  const interval = setInterval(() => {
-    console.warn(`transaction has been running for ${Date.now() - start} MS. transaction was started from:`, stack);
-  }, TIMEOUT);
-
-  return transaction.apply(undefined, arguments)
-    .then((res) => {
-      clearInterval(interval);
-      return res;
-    })
-    .catch((err) => {
-      clearInterval(interval);
-      throw err;
-    });
 };
 
 function isGenerator(fn) {
