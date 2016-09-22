@@ -87,6 +87,25 @@ transaction.start = function (modelClassOrKnex) {
   });
 };
 
+transaction.debug = function () {
+  const TIMEOUT = 10000;
+  const stack = new Error().stack;
+  const start = Date.now();
+  const interval = setInterval(() => {
+    console.warn(`transaction has been running for ${Date.now() - start} MS. transaction was started from:`, stack);
+  }, TIMEOUT);
+
+  return transaction.apply(undefined, arguments)
+    .then((res) => {
+      clearInterval(interval);
+      return res;
+    })
+    .catch((err) => {
+      clearInterval(interval);
+      throw err;
+    });
+};
+
 function isGenerator(fn) {
   return fn && fn.constructor && fn.constructor.name === 'GeneratorFunction';
 }
