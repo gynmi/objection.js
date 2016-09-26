@@ -3,6 +3,22 @@ import Promise from 'bluebird';
 import Model from './model/Model';
 import {isSubclassOf} from './utils/classUtils';
 
+let _id = 1;
+const TIMEOUT = 10000;
+
+function logPool(knex) {
+  if (knex && typeof knex.client === 'object' && typeof knex.client.pool === 'object' && typeof knex.client.pool._waitingClients === 'object') {
+    console.warn('pool:', {
+      "inUseObjects.length": knex.client.pool._inUseObjects.length,
+      "availableObjects.length": knex.client.pool._availableObjects.length,
+      "waitingClients.size": knex.client.pool._waitingClients._size,
+      "waitingClients.total": knex.client.pool._waitingClients._total
+    });
+  } else {
+    console.warn('pool: undefined');
+  }
+}
+
 /**
  * @returns {Promise}
  */
@@ -17,12 +33,39 @@ export default function transaction() {
     let knex = _.first(args);
     args = args.slice(1);
 
+    const id = _id++;
+    const stack = new Error().stack;
+    const start = Date.now();
+    let timeout = false;
+
+    const interval = setInterval(() => {
+      timeout = true;
+      console.warn(`transaction ${id} has been running for ${Date.now() - start} ms. transaction was started from:`, stack);
+      logPool(knex);
+    }, TIMEOUT);
+
     // If the function is a generator, wrap it using Promise.coroutine.
     if (isGenerator(args[0])) {
       args[0] = Promise.coroutine(args[0]);
     }
 
-    return knex.transaction.apply(knex, args);
+    return Promise.resolve().then(() => {
+      return knex.transaction.apply(knex, args);
+    }).then((res) => {
+      clearInterval(interval);
+      if (timeout) {
+        console.warn(`transaction ${id} finally succeeded after ${Date.now() - start} ms`);
+        logPool(knex);
+      }
+      return res;
+    }).catch((err) => {
+      clearInterval(interval);
+      if (timeout) {
+        console.warn(`transaction ${id} failed after ${Date.now() - start} ms`, err.stack);
+        logPool(knex);
+      }
+      throw err;
+    });
   } else {
     // The last argument should be the callback and all other Model subclasses.
     let callback = _.last(arguments);
@@ -47,11 +90,15 @@ export default function transaction() {
       callback = Promise.coroutine(callback);
     }
 
-    const TIMEOUT = 10000;
+    const id = _id++;
     const stack = new Error().stack;
     const start = Date.now();
+    let timeout = false;
+
     const interval = setInterval(() => {
-      console.warn(`transaction has been running for ${Date.now() - start} ms. transaction was started from:`, stack);
+      timeout = true;
+      console.warn(`transaction ${id} has been running for ${Date.now() - start} ms. transaction was started from:`, stack);
+      logPool(knex);
     }, TIMEOUT);
 
     return knex.transaction(trx => {
@@ -68,9 +115,17 @@ export default function transaction() {
       });
     }).then((res) => {
       clearInterval(interval);
+      if (timeout) {
+        console.warn(`transaction ${id} finally succeeded after ${Date.now() - start} ms`);
+        logPool(knex);
+      }
       return res;
     }).catch((err) => {
       clearInterval(interval);
+      if (timeout) {
+        console.warn(`transaction ${id} failed after ${Date.now() - start} ms`, err.stack);
+        logPool(knex);
+      }
       throw err;
     });
   }

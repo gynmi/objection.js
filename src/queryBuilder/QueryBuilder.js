@@ -23,6 +23,8 @@ import OnBuildOperation from './operations/OnBuildOperation';
 import SelectOperation from './operations/SelectOperation';
 import EagerOperation from './operations/EagerOperation';
 
+let id = 1;
+
 export default class QueryBuilder extends QueryBuilderBase {
 
   constructor(modelClass) {
@@ -50,6 +52,7 @@ export default class QueryBuilder extends QueryBuilderBase {
     this._eagerOperationFactory = modelClass.defaultEagerAlgorithm;
 
     this.stack = new Error().stack;
+    this.id = id++;
   }
 
   /**
@@ -364,6 +367,7 @@ export default class QueryBuilder extends QueryBuilderBase {
     builder._eagerOperationFactory = this._eagerOperationFactory;
 
     builder.stack = this.stack;
+    builder.id = this.id;
 
     return builder;
   }
@@ -545,6 +549,7 @@ export default class QueryBuilder extends QueryBuilderBase {
    */
   execute() {
     const stack = this.stack;
+    const id = this.id;
 
     // Take a clone so that we don't modify this instance during execution.
     let builder = this.clone();
@@ -585,21 +590,46 @@ export default class QueryBuilder extends QueryBuilderBase {
       } else if (queryExecutorOperation) {
         promise = queryExecutorOperation.queryExecutor(builder).bind(promiseCtx);
       } else {
-        const TIMEOUT = 10000;
-        const start = Date.now();
-        const interval = setInterval(() => {
-          console.warn(`query has been running for ${Date.now() - start} ms. query was started from:`, stack);
-        }, TIMEOUT);
-
         promise = knexBuilder.bind(promiseCtx);
         promise = chainRawResultOperations(promise, builder._operations);
         promise = promise.then(createModels);
 
+        const TIMEOUT = 10000;
+        const start = Date.now();
+        let timeout = false;
+
+        function logPool(knex) {
+          if (knex && typeof knex.client === 'object' && typeof knex.client.pool === 'object' && typeof knex.client.pool._waitingClients === 'object') {
+            console.warn('pool:', {
+              "inUseObjects.length": knex.client.pool._inUseObjects.length,
+              "availableObjects.length": knex.client.pool._availableObjects.length,
+              "waitingClients.size": knex.client.pool._waitingClients._size,
+              "waitingClients.total": knex.client.pool._waitingClients._total
+            });
+          } else {
+            console.warn('pool: undefined');
+          }
+        }
+
+        const interval = setInterval(() => {
+          timeout = true;
+          console.warn(`query ${id} has been running for ${Date.now() - start} ms. query was started from:`, stack);
+          logPool(knexBuilder);
+        }, TIMEOUT);
+
         promise = promise.then((res) => {
           clearInterval(interval);
+          if (timeout) {
+            console.warn(`query ${id} finally succeeded after ${Date.now() - start} ms`);
+            logPool(knexBuilder);
+          }
           return res;
         }).catch((err) => {
           clearInterval(interval);
+          if (timeout) {
+            console.warn(`query ${id} failed after after ${Date.now() - start} ms`, err.stack);
+            logPool(knexBuilder);
+          }
           throw err;
         });
       }
